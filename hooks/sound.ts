@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-// Sound for the winter evening look: snow crunches under typing and sending,
+// Sound for the winter evening look: a soft tap under typing, a snow step on
+// sending,
 // and one quiet song on repeat. Credits for the recordings: ../CREDITS.md.
 //
 // The song is one for the whole computer, however many chats are open, and its
@@ -23,7 +24,7 @@ const LOOK_EVERY_MS = 12_000
 // shortly after, and one that hears two stops its own for a while.
 const DOUBLE_CHECK_MS = 2_500
 const SONG_GAIN = 0.8
-const KEY_COUNT = 8
+const KEY_COUNT = 4
 const STEP_COUNT = 6
 const KEY_MIN_GAP_MS = 75
 const STEP_MIN_GAP_MS = 220

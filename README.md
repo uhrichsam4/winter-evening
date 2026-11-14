@@ -3,7 +3,7 @@
 A look for the Claude desktop app: a cold, foggy, steel-blue evening in an apartment-block
 courtyard, seen as if from a window. Behind the conversation, snow falls in five depths, fog
 drifts between the buildings, bare trees sway, a girl walks away up the lane and other people
-cross in the distance. It also plays a snow crunch as you type and send, and a quiet song.
+cross in the distance. It also plays a soft tap as you type, a snow step when you send, and a quiet song.
 
 The scene is one script-free SVG animated with CSS, so it is an illustration, not a photograph.
 
