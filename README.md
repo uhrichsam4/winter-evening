@@ -31,6 +31,12 @@ Add marketplace with `uhrichsam4/winter-evening`, then Add plugin.
 The look draws in the Claude desktop and mobile apps; a terminal draws no look. Sound plays on
 macOS (through `afplay`).
 
+A volume row sits above the message box: `−` and `+` change the level in ten steps for the
+crunches and the song together, `Mute` silences everything, and `Hide` puts the row away.
+Changing the level starts the song again from the beginning, because the player sets its
+loudness when a track starts.
+
+- `/winter volume 40` sets the level; `/winter volume` alone shows or hides the row.
 - `/winter music` turns the song on or off.
 - `/winter crunch` turns the snow crunches on or off.
 - `/winter text` draws the first lines of the latest reply into the scene, hung over the lane.

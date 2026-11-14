@@ -3,7 +3,7 @@ import type { Register, ThemeSetArgs } from 'claude-code'
 
 import { makeColors } from './make-colors.js'
 import { sceneWith } from './scene.js'
-import { registerSound, startSound } from './sound.js'
+import { registerSound, setVolume, showVolume, startSound, toggleMute } from './sound.js'
 
 // Steel-blue dusk: dark only, to sit under the snowy evening scene.
 const { theme, problems } = makeColors({
@@ -41,6 +41,11 @@ const sceneEpoch = atom({ plugin: 'winter-evening', key: 'sceneEpoch' } as const
 
 // Whether the reply is drawn in the scene (/winter text, in sound.ts).
 const isTextShown = atom({ plugin: 'winter-evening', key: 'isTextShown' } as const, false)
+
+// How loud the sound is, 0 to 100, and whether its row above the message box
+// is shown (sound.ts keeps both).
+const volume = atom({ plugin: 'winter-evening', key: 'volume' } as const, 100)
+const isVolumeShown = atom({ plugin: 'winter-evening', key: 'isVolumeShown' } as const, true)
 
 const ALT =
   'Snow falling over a foggy blue courtyard between apartment blocks at dusk, people walking along a snowy path'
@@ -83,6 +88,38 @@ export const register: Register = on => {
     }
 
     return answer
+  })
+
+  // The volume row above the message box: quieter, a bar, louder, mute, hide.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey || !(await read($, isVolumeShown))) {
+      return next(e)
+    }
+
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const now = await read($, volume)
+    // Ten cells, drawn as text: every build of the app has Text, not every one
+    // has a progress bar.
+    const filled = Math.round(now / 10)
+    const bar = '█'.repeat(filled) + '░'.repeat(10 - filled)
+
+    return (
+      <Box gap={1} alignItems="center">
+        <Text dimColor>Sound</Text>
+        <Button key="quieter" label="−" onPress={() => setVolume($, now - 10)} />
+        <Text>{`${bar} ${now}%`}</Text>
+        <Button key="louder" label="+" onPress={() => setVolume($, now + 10)} />
+        <Button key="mute" label={now === 0 ? 'Unmute' : 'Mute'} onPress={() => toggleMute($)} />
+        <Button
+          key="hide"
+          label="Hide"
+          onPress={async () => {
+            await showVolume($, false)
+            $.ui.toast('Volume row hidden. /winter volume brings it back.')
+          }}
+        />
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Backdrop' }, async ($, e, next) => {
