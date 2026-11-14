@@ -1,0 +1,12 @@
+{
+  "name": "winter-evening",
+  "owner": {
+    "name": "uhrichsam4"
+  },
+  "plugins": [
+    {
+      "name": "winter-evening",
+      "source": "./"
+    }
+  ]
+}
