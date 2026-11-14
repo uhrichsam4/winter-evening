@@ -63,7 +63,13 @@ export const register: Register = on => {
       const now = await $.clock.now()
       await update($, sceneEpoch, () => now)
     }
-    await $.theme.set(LOOK)
+    // An older build of the app takes the scene but not the colors: give it
+    // the scene alone, so it still has the look's picture and its sound.
+    try {
+      await $.theme.set(LOOK)
+    } catch {
+      await $.theme.set({ backdrop: LOOK.backdrop }).catch(() => {})
+    }
     // While you build: the line that would stop Desktop painting this look.
     const unpainted = problems.find(line => line.startsWith("Desktop won't paint"))
 

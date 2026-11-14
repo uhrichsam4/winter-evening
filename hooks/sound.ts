@@ -3,10 +3,25 @@ import type { EngineInterface, On } from 'claude-code'
 
 // Sound for the winter evening look: snow crunches under typing and sending,
 // and one quiet song on repeat. Credits for the recordings: ../CREDITS.md.
+//
+// The song is one for the whole computer, however many chats are open, and its
+// loudness changes while it plays. Every chat runs this mod, so they share one
+// small file, the control file: what the person last chose, in any chat. One
+// chat runs the player (player/song-player.js), which follows that file; the
+// others see the player is running and leave it be.
 
 const SONG = 'sounds/midvinter.m4a'
-const SONG_MS = 274_000
-const SONG_GAP_MS = 7_000
+const PLAYER = 'player/song-player.js'
+// Where the control file is kept, under the person's home folder.
+const CONTROL = '.claude/winter-evening-sound.json'
+// How `pgrep -f` knows the player among the computer's processes.
+const PLAYER_MATCH = '^osascript -l JavaScript .*player/song-player\\.js'
+// How often a chat looks: for the person's choices made in another chat, and
+// for whether the player is still running.
+const LOOK_EVERY_MS = 12_000
+// Two chats can start a player in the same moment: each looks once more
+// shortly after, and one that hears two stops its own for a while.
+const DOUBLE_CHECK_MS = 2_500
 const SONG_GAIN = 0.8
 const KEY_COUNT = 8
 const STEP_COUNT = 6
@@ -23,10 +38,6 @@ const volume = atom({ plugin: 'winter-evening', key: 'volume' } as const, 100)
 // Whether that volume row is shown (/winter volume).
 const isVolumeShown = atom({ plugin: 'winter-evening', key: 'isVolumeShown' } as const, true)
 
-// The player takes its loudness when a song starts, so a change has to start
-// the song again: wait until the person has stopped pressing.
-const RETUNE_AFTER_MS = 1_200
-
 type Kind = 'key' | 'step'
 
 let isMusicOn = true
@@ -34,14 +45,15 @@ let isCrunchOn = true
 // When each kind last sounded: a keystroke never swallows the send's step.
 const lastAt: Record<Kind, number> = { key: 0, step: 0 }
 let lastIndex = 0
-let song: AbortController | undefined
-let nextSong: { cancel: () => void } | undefined
-// The loudness now, 0 to 1, and the one the song now playing was started at.
+// This chat's own player, when it is the one running it.
+let player: { stop: () => void } | undefined
+let look: { cancel: () => void } | undefined
+let doubleCheck: { cancel: () => void } | undefined
+// The loudness now, 0 to 1.
 let level = 1
-let songLevel = 1
-let retune: { cancel: () => void } | undefined
 // What Unmute goes back to.
 let unmuteTo = 100
+let controlPath = ''
 
 function crunch($: EngineInterface, kind: Kind): void {
   if (!isCrunchOn || level === 0) {
@@ -67,29 +79,128 @@ function crunch($: EngineInterface, kind: Kind): void {
   }
 }
 
-function stopSong(): void {
-  nextSong?.cancel()
-  nextSong = undefined
-  song?.abort()
-  song = undefined
+function stopPlayer(): void {
+  doubleCheck?.cancel()
+  doubleCheck = undefined
+  const mine = player
+  player = undefined
+
+  mine?.stop()
 }
 
-async function playSong($: EngineInterface): Promise<void> {
-  stopSong()
-  songLevel = level
-
-  if (!isMusicOn || level === 0) {
+// Writes what the person chose for every chat, and for the player, to read.
+async function writeControl($: EngineInterface): Promise<void> {
+  if (controlPath === '') {
     return
   }
-  song = new AbortController()
-  $.audio.play({ asset: SONG }, { gain: SONG_GAIN * level, signal: song.signal }).catch(() => {})
-  nextSong = $.clock.after(SONG_MS + SONG_GAP_MS, () => {
-    void playSong($)
+  const control = { volume: Math.round(level * 100), music: isMusicOn, gain: SONG_GAIN * level }
+  await $.fs.write(controlPath, `${JSON.stringify(control)}\n`).catch(() => {})
+}
+
+// Takes up what the person last chose in any chat; false when nothing is written yet.
+async function readControl($: EngineInterface): Promise<boolean> {
+  try {
+    const text = await $.fs.read(controlPath)
+    const control: unknown = JSON.parse(typeof text === 'string' ? text : '')
+
+    if (typeof control !== 'object' || control === null) {
+      return false
+    }
+    const { volume: saved, music } = control as { volume?: unknown; music?: unknown }
+
+    if (typeof saved === 'number' && saved >= 0 && saved <= 100) {
+      level = saved / 100
+
+      if (saved > 0) {
+        unmuteTo = saved
+      }
+      await update($, volume, () => saved)
+    }
+    isMusicOn = music !== false
+
+    return true
+  } catch {
+    return false
+  }
+}
+
+// How many players are running on this computer, this chat's included; -1
+// when that cannot be told (no `pgrep` here, or it failed).
+async function playersRunning($: EngineInterface): Promise<number> {
+  try {
+    const found = await $.process.run(['pgrep', '-f', PLAYER_MATCH], { timeoutMs: 5_000 })
+
+    if (found.exitCode === 0) {
+      return found.stdout.split('\n').filter(line => line.trim() !== '').length
+    }
+
+    return found.exitCode === 1 ? 0 : -1
+  } catch {
+    return -1
+  }
+}
+
+function startPlayer($: EngineInterface): void {
+  const stream = $.process.spawn({
+    argv: ['osascript', '-l', 'JavaScript', `${$.plugin.root}/${PLAYER}`, `${$.plugin.root}/${SONG}`, controlPath],
+  })
+  const mine = {
+    // Ending the stream ends the player.
+    stop: (): void => {
+      stream.return({ code: null, signal: 'SIGTERM' }).catch(() => {})
+    },
+  }
+  player = mine
+  // The loop is the player's life: it ends when the player does.
+  void (async () => {
+    try {
+      for await (const piece of stream) {
+        void piece
+      }
+    } catch {
+      // No `osascript` here, or the player failed: there is no song.
+    }
+
+    if (player === mine) {
+      player = undefined
+    }
+  })()
+  doubleCheck = $.clock.after(DOUBLE_CHECK_MS + Math.random() * 1_500, () => {
+    doubleCheck = undefined
+    void stepBackIfDoubled($)
   })
 }
 
-// Sets how loud the crunches and the song are, 0 to 100. The crunches follow at
-// once; the song starts again at the new loudness a moment after the last change.
+async function stepBackIfDoubled($: EngineInterface): Promise<void> {
+  if (player !== undefined && (await playersRunning($)) > 1) {
+    stopPlayer()
+    lookSoon($, 3_000 + Math.random() * 12_000)
+  }
+}
+
+function lookSoon($: EngineInterface, afterMs: number): void {
+  look?.cancel()
+  look = $.clock.after(afterMs, () => {
+    void keepSong($)
+  })
+}
+
+// One look: take up the person's choices, and start the player if the music
+// is on and no chat is running it. Then look again later, for as long as the
+// chat lives.
+async function keepSong($: EngineInterface): Promise<void> {
+  await readControl($)
+
+  if (!isMusicOn) {
+    stopPlayer()
+  } else if (player === undefined && (await playersRunning($)) === 0) {
+    startPlayer($)
+  }
+  lookSoon($, LOOK_EVERY_MS + Math.random() * 4_000)
+}
+
+// Sets how loud the crunches and the song are, 0 to 100, in every chat. The
+// song follows while it plays: it does not start over.
 export async function setVolume($: EngineInterface, percent: number): Promise<void> {
   const next = Math.max(0, Math.min(100, Math.round(percent / 10) * 10))
 
@@ -98,15 +209,7 @@ export async function setVolume($: EngineInterface, percent: number): Promise<vo
   }
   level = next / 100
   await update($, volume, () => next)
-  await $.store.set('volume', next)
-  retune?.cancel()
-  retune = $.clock.after(RETUNE_AFTER_MS, () => {
-    retune = undefined
-
-    if (level !== songLevel) {
-      void playSong($)
-    }
-  })
+  await writeControl($)
 }
 
 // Silence, or back to the loudness before it.
@@ -121,16 +224,18 @@ export async function showVolume($: EngineInterface, isShown: boolean): Promise<
 
 // Called from the mod's one `session.start` hook.
 export async function startSound($: EngineInterface): Promise<void> {
-  isMusicOn = (await $.store.get('music')) !== false
+  const home = await $.env.get('HOME')
+  controlPath = home === undefined || home === '' ? '' : `${home}/${CONTROL}`
   isCrunchOn = (await $.store.get('crunch')) !== false
   // The copy of the reply in the scene is off unless asked for.
   const isText = (await $.store.get('text')) === true
   await update($, isTextShown, () => isText)
-  const saved = await $.store.get('volume')
-  const percent = typeof saved === 'number' && saved >= 0 && saved <= 100 ? saved : 100
-  level = percent / 100
-  unmuteTo = percent > 0 ? percent : 100
-  await update($, volume, () => percent)
+
+  // The first chat ever writes the control file; every other one reads it.
+  if (controlPath !== '' && !(await readControl($))) {
+    await writeControl($)
+  }
+  await update($, volume, () => Math.round(level * 100))
   const isBar = (await $.store.get('volumeBar')) !== false
   await update($, isVolumeShown, () => isBar)
   await $.command.register({
@@ -138,15 +243,17 @@ export async function startSound($: EngineInterface): Promise<void> {
     description: 'Winter evening: /winter volume 40, /winter music, /winter crunch, /winter text, /winter quiet, /winter on',
   })
 
-  // A reload of the mod ends the song it was playing, so each start begins one.
-  await playSong($)
+  // A little apart from the other chats starting in the same moment.
+  lookSoon($, 300 + Math.random() * 2_500)
 }
 
 export function registerSound(on: On): void {
   on('session.end', ($, e, next) => {
     // /clear ends the session's record, not the evening: the song plays on.
     if (e.reason !== 'clear') {
-      stopSong()
+      look?.cancel()
+      look = undefined
+      stopPlayer()
     }
 
     return next(e)
@@ -179,14 +286,11 @@ export function registerSound(on: On): void {
       isMusicOn = true
       isCrunchOn = true
     }
-    await $.store.set('music', isMusicOn)
     await $.store.set('crunch', isCrunchOn)
-
-    if (!isMusicOn) {
-      stopSong()
-    } else if (song === undefined && nextSong === undefined) {
-      await playSong($)
-    }
+    // The player reads the same file: it ends itself when the music goes off,
+    // and the look below starts one when it comes back on.
+    await writeControl($)
+    await keepSong($)
 
     const isText = await read($, isTextShown)
 

@@ -29,12 +29,11 @@ Add marketplace with `uhrichsam4/winter-evening`, then Add plugin.
 ## Using it
 
 The look draws in the Claude desktop and mobile apps; a terminal draws no look. Sound plays on
-macOS (through `afplay`).
+macOS (the crunches through `afplay`, the song through `osascript`).
 
 A volume row sits above the message box: `−` and `+` change the level in ten steps for the
 crunches and the song together, `Mute` silences everything, and `Hide` puts the row away.
-Changing the level starts the song again from the beginning, because the player sets its
-loudness when a track starts.
+The song turns up or down while it plays; it does not start over.
 
 - `/winter volume 40` sets the level; `/winter volume` alone shows or hides the row.
 - `/winter music` turns the song on or off.
@@ -43,6 +42,11 @@ loudness when a track starts.
 - `/winter quiet` silences everything, `/winter on` brings the sound back.
 
 Add `on` or `off` to say which, as in `/winter music off`.
+
+The song plays once for the whole computer, however many chats are open. One chat runs a small
+player (`player/song-player.js`, through macOS's own `osascript`); the others see it running and
+leave it be. The volume and the music switch are shared, so changing them in any chat changes
+the one song. They are kept in `~/.claude/winter-evening-sound.json`.
 
 The crunch plays when you type in the message box, when you send, and when you press a button a
 mod drew. Mods cannot hear other mouse clicks.
