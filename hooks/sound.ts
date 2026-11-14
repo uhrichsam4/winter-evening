@@ -24,7 +24,9 @@ const LOOK_EVERY_MS = 12_000
 // shortly after, and one that hears two stops its own for a while.
 const DOUBLE_CHECK_MS = 2_500
 const SONG_GAIN = 0.8
-const KEY_COUNT = 4
+// The typing sounds to choose between, and how many recordings each has.
+const KEY_SOUNDS = { drops: 4, snow: 8 } as const
+type KeySound = keyof typeof KEY_SOUNDS
 const STEP_COUNT = 6
 const KEY_MIN_GAP_MS = 75
 const STEP_MIN_GAP_MS = 220
@@ -36,6 +38,9 @@ const isTextShown = atom({ plugin: 'winter-evening', key: 'isTextShown' } as con
 // message box draws it (register.tsx).
 const volume = atom({ plugin: 'winter-evening', key: 'volume' } as const, 100)
 
+// Which typing sound plays: the soft taps or the snow crunch (/winter keys).
+const keySound = atom({ plugin: 'winter-evening', key: 'keySound' } as const, 'drops')
+
 // Whether that volume row is shown (/winter volume).
 const isVolumeShown = atom({ plugin: 'winter-evening', key: 'isVolumeShown' } as const, true)
 
@@ -46,6 +51,7 @@ let isCrunchOn = true
 // When each kind last sounded: a keystroke never swallows the send's step.
 const lastAt: Record<Kind, number> = { key: 0, step: 0 }
 let lastIndex = 0
+let keys: KeySound = 'drops'
 // This chat's own player, when it is the one running it.
 let player: { stop: () => void } | undefined
 let look: { cancel: () => void } | undefined
@@ -66,7 +72,7 @@ function crunch($: EngineInterface, kind: Kind): void {
     return
   }
   lastAt[kind] = now
-  const count = kind === 'key' ? KEY_COUNT : STEP_COUNT
+  const count = kind === 'key' ? KEY_SOUNDS[keys] : STEP_COUNT
   // Never the same recording twice running.
   const index = 1 + ((lastIndex + Math.floor(Math.random() * (count - 1))) % count)
   lastIndex = index
@@ -74,7 +80,8 @@ function crunch($: EngineInterface, kind: Kind): void {
 
   // A sound that cannot play must never hold up the typing or the send.
   try {
-    $.audio.play({ asset: `sounds/${kind}${index}.wav` }, { gain }).catch(() => {})
+    const asset = kind === 'key' ? `sounds/keys-${keys}/key${index}.wav` : `sounds/step${index}.wav`
+    $.audio.play({ asset }, { gain }).catch(() => {})
   } catch {
     // Nothing to do: the crunch is decoration.
   }
@@ -213,6 +220,16 @@ export async function setVolume($: EngineInterface, percent: number): Promise<vo
   await writeControl($)
 }
 
+// Switches the typing sound between the soft taps and the snow crunch, and
+// plays one so the person hears which it is now.
+export async function switchKeys($: EngineInterface, to?: string): Promise<void> {
+  keys = to === 'snow' || to === 'drops' ? to : keys === 'drops' ? 'snow' : 'drops'
+  await update($, keySound, () => keys)
+  await $.store.set('keys', keys)
+  lastAt.key = 0
+  crunch($, 'key')
+}
+
 // Silence, or back to the loudness before it.
 export async function toggleMute($: EngineInterface): Promise<void> {
   await setVolume($, level === 0 ? unmuteTo : 0)
@@ -228,6 +245,8 @@ export async function startSound($: EngineInterface): Promise<void> {
   const home = await $.env.get('HOME')
   controlPath = home === undefined || home === '' ? '' : `${home}/${CONTROL}`
   isCrunchOn = (await $.store.get('crunch')) !== false
+  keys = (await $.store.get('keys')) === 'snow' ? 'snow' : 'drops'
+  await update($, keySound, () => keys)
   // The copy of the reply in the scene is off unless asked for.
   const isText = (await $.store.get('text')) === true
   await update($, isTextShown, () => isText)
@@ -241,7 +260,7 @@ export async function startSound($: EngineInterface): Promise<void> {
   await update($, isVolumeShown, () => isBar)
   await $.command.register({
     name: 'winter',
-    description: 'Winter evening: /winter volume 40, /winter music, /winter crunch, /winter text, /winter quiet, /winter on',
+    description: 'Winter evening: /winter keys, /winter volume 40, /winter music, /winter crunch, /winter text, /winter quiet, /winter on',
   })
 
   // A little apart from the other chats starting in the same moment.
@@ -265,7 +284,10 @@ export function registerSound(on: On): void {
     const [word = '', want = ''] = e.args.trim().toLowerCase().split(/\s+/)
     const flip = (now: boolean): boolean => (want === 'on' ? true : want === 'off' ? false : !now)
 
-    if (word === 'volume') {
+    if (word === 'keys') {
+      // `/winter keys snow` or `/winter keys drops`; alone, it switches.
+      await switchKeys($, want)
+    } else if (word === 'volume') {
       // `/winter volume 40` sets it; `/winter volume` alone shows or hides the row.
       if (/^\d+$/.test(want)) {
         await setVolume($, Number(want))
@@ -296,7 +318,7 @@ export function registerSound(on: On): void {
     const isText = await read($, isTextShown)
 
     return {
-      text: `Winter evening: volume ${Math.round(level * 100)}%, music ${isMusicOn ? 'on' : 'off'}, snow crunch ${isCrunchOn ? 'on' : 'off'}, reply copied into the scene ${isText ? 'on' : 'off'}. Change with /winter volume 40, /winter music, /winter crunch, /winter text, /winter quiet or /winter on.`,
+      text: `Winter evening: typing sound ${keys === 'snow' ? 'snow crunch' : 'soft taps'}, volume ${Math.round(level * 100)}%, music ${isMusicOn ? 'on' : 'off'}, snow crunch ${isCrunchOn ? 'on' : 'off'}, reply copied into the scene ${isText ? 'on' : 'off'}. Change with /winter keys, /winter volume 40, /winter music, /winter crunch, /winter text, /winter quiet or /winter on.`,
     }
   })
 

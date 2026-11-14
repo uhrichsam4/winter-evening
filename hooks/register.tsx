@@ -3,7 +3,7 @@ import type { Register, ThemeSetArgs } from 'claude-code'
 
 import { makeColors } from './make-colors.js'
 import { sceneWith } from './scene.js'
-import { registerSound, setVolume, showVolume, startSound, toggleMute } from './sound.js'
+import { registerSound, setVolume, showVolume, startSound, switchKeys, toggleMute } from './sound.js'
 
 // Steel-blue dusk: dark only, to sit under the snowy evening scene.
 const { theme, problems } = makeColors({
@@ -46,6 +46,9 @@ const isTextShown = atom({ plugin: 'winter-evening', key: 'isTextShown' } as con
 // is shown (sound.ts keeps both).
 const volume = atom({ plugin: 'winter-evening', key: 'volume' } as const, 100)
 const isVolumeShown = atom({ plugin: 'winter-evening', key: 'isVolumeShown' } as const, true)
+
+// Which typing sound plays, 'drops' or 'snow' (sound.ts keeps it).
+const keySound = atom({ plugin: 'winter-evening', key: 'keySound' } as const, 'drops')
 
 const ALT =
   'Snow falling over a foggy blue courtyard between apartment blocks at dusk, people walking along a snowy path'
@@ -104,6 +107,7 @@ export const register: Register = on => {
 
     const { Box, Button, Text } = $.ui.resolve(e)
     const now = await read($, volume)
+    const isSnow = (await read($, keySound)) === 'snow'
     // Ten cells, drawn as text: every build of the app has Text, not every one
     // has a progress bar.
     const filled = Math.round(now / 10)
@@ -116,6 +120,7 @@ export const register: Register = on => {
         <Text>{`${bar} ${now}%`}</Text>
         <Button key="louder" label="+" onPress={() => setVolume($, now + 10)} />
         <Button key="mute" label={now === 0 ? 'Unmute' : 'Mute'} onPress={() => toggleMute($)} />
+        <Button key="keys" label={isSnow ? 'Keys: snow crunch' : 'Keys: soft taps'} onPress={() => switchKeys($)} />
         <Button
           key="hide"
           label="Hide"

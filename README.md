@@ -37,6 +37,8 @@ The song turns up or down while it plays; it does not start over.
 
 - `/winter volume 40` sets the level; `/winter volume` alone shows or hides the row.
 - `/winter music` turns the song on or off.
+- `/winter keys` switches the typing sound between soft taps and a snow crunch; the row has a
+  button for it too.
 - `/winter crunch` turns the snow crunches on or off.
 - `/winter text` draws the first lines of the latest reply into the scene, hung over the lane.
 - `/winter quiet` silences everything, `/winter on` brings the sound back.

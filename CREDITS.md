@@ -14,7 +14,7 @@
 
 - Source: https://opengameart.org/content/interface-sounds
 - Changes: the four `drop` sounds, converted to mono 44.1 kHz, trimmed to 160 ms and normalized
-  (`sounds/key*.wav`).
+  (`sounds/keys-drops/`).
 
 ## Snow footsteps
 
@@ -22,4 +22,5 @@ Recorded by Iwan "qubodup" Gabovitch, winter 2008/2009, Berlin. Public domain de
 
 - "4 dry snow steps": https://opengameart.org/content/4-dry-snow-steps
 - "9 wet snow steps": https://opengameart.org/content/9-wet-snow-steps
-- Changes: converted to mono 44.1 kHz, normalized, trimmed. `sounds/step*.wav` are whole steps, played on sending.
+- Changes: converted to mono 44.1 kHz, normalized, trimmed. `sounds/step*.wav` are whole steps, played on sending, and
+  `sounds/keys-snow/` holds the densest ~130 ms of a step, the snow-crunch typing sound.
