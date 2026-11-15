@@ -1,5 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, On } from 'claude-code'
+import type { EngineInterface, On, ThemeSetArgs } from 'claude-code'
+
+import { chooseLook, joinLooks, nextLook, readLooks } from './looks.js'
 
 // Sound for the winter evening look: a soft tap under typing, a snow step on
 // sending,
@@ -30,6 +32,12 @@ type KeySound = keyof typeof KEY_SOUNDS
 const STEP_COUNT = 6
 const KEY_MIN_GAP_MS = 75
 const STEP_MIN_GAP_MS = 220
+// This mod in the shared theme switch (looks.ts), and how often a chat looks
+// at it for a switch made in another chat.
+const ME = 'winter-evening'
+const LABEL = 'Winter'
+const WATCH_EVERY_MS = 3_000
+const PRESS_RECHECK_MS = 300
 
 // Whether the reply is drawn in the scene (/winter text); register.tsx reads it.
 const isTextShown = atom({ plugin: 'winter-evening', key: 'isTextShown' } as const, false)
@@ -44,7 +52,22 @@ const keySound = atom({ plugin: 'winter-evening', key: 'keySound' } as const, 'd
 // Whether that volume row is shown (/winter volume).
 const isVolumeShown = atom({ plugin: 'winter-evening', key: 'isVolumeShown' } as const, true)
 
+// Whether this is the theme that shows (~/.claude/looks.json); while it is not,
+// the look, its row and its sounds rest.
+const isActive = atom({ plugin: 'winter-evening', key: 'isActive' } as const, true)
+
 type Kind = 'key' | 'step'
+
+// The same as isActive, kept here for the sounds, which must not wait on it.
+let isShowing = true
+// The look to give the app when this theme shows (register.tsx).
+let lookArgs: ThemeSetArgs | undefined
+let watch: { cancel: () => void } | undefined
+// What the control file last said about the look; not one of the person's choices.
+let controlLook = true
+// Who set the session's backdrop, as the last drawing of it said; undefined
+// until one does.
+let backdropOwner: string | undefined
 
 let isMusicOn = true
 let isCrunchOn = true
@@ -63,7 +86,7 @@ let unmuteTo = 100
 let controlPath = ''
 
 function crunch($: EngineInterface, kind: Kind): void {
-  if (!isCrunchOn || level === 0) {
+  if (!isShowing || !isCrunchOn || level === 0) {
     return
   }
   const now = Date.now()
@@ -97,12 +120,14 @@ function stopPlayer(): void {
 }
 
 // Writes what the person chose for every chat, and for the player, to read.
+// `look` says whether this theme shows: the player ends while it does not.
 async function writeControl($: EngineInterface): Promise<void> {
   if (controlPath === '') {
     return
   }
-  const control = { volume: Math.round(level * 100), music: isMusicOn, gain: SONG_GAIN * level }
+  const control = { volume: Math.round(level * 100), music: isMusicOn, gain: SONG_GAIN * level, look: isShowing }
   await $.fs.write(controlPath, `${JSON.stringify(control)}\n`).catch(() => {})
+  controlLook = isShowing
 }
 
 // Takes up what the person last chose in any chat; false when nothing is written yet.
@@ -114,7 +139,9 @@ async function readControl($: EngineInterface): Promise<boolean> {
     if (typeof control !== 'object' || control === null) {
       return false
     }
-    const { volume: saved, music } = control as { volume?: unknown; music?: unknown }
+    // `look` is the theme switch's, not the person's: only noted.
+    const { volume: saved, music, look: shown } = control as { volume?: unknown; music?: unknown; look?: unknown }
+    controlLook = shown !== false
 
     if (typeof saved === 'number' && saved >= 0 && saved <= 100) {
       level = saved / 100
@@ -197,20 +224,172 @@ function lookSoon($: EngineInterface, afterMs: number): void {
 // is on and no chat is running it. Then look again later, for as long as the
 // chat lives.
 async function keepSong($: EngineInterface): Promise<void> {
+  // While another theme shows, no song: looking starts again when this one does.
+  if (!isShowing) {
+    look?.cancel()
+    look = undefined
+    stopPlayer()
+
+    return
+  }
   await readControl($)
+
+  if (!isShowing) {
+    return
+  }
 
   if (!isMusicOn) {
     stopPlayer()
-  } else if (player === undefined && (await playersRunning($)) === 0) {
+  } else if (player === undefined && (await playersRunning($)) === 0 && isShowing) {
+    // Still the theme that shows after the wait for `pgrep`.
     startPlayer($)
   }
   lookSoon($, LOOK_EVERY_MS + Math.random() * 4_000)
+}
+
+// Gives the app the look. An older build of the app takes the scene but not
+// the colors: give it the scene alone, so it still has the look's picture.
+async function applyLook($: EngineInterface): Promise<void> {
+  if (lookArgs === undefined) {
+    return
+  }
+
+  try {
+    await $.theme.set(lookArgs)
+  } catch {
+    await $.theme.set({ backdrop: lookArgs.backdrop }).catch(() => {})
+  }
+  // Until a drawing of the backdrop says otherwise.
+  backdropOwner = ME
+}
+
+// Who set the session's backdrop, as its last drawing said (register.tsx).
+export function noteBackdrop(owner: string): void {
+  backdropOwner = owner
+}
+
+// This theme shows, or rests while another does. Resting never clears the
+// theme: the other mod's look replaces it.
+async function becomeShown($: EngineInterface, isShown: boolean): Promise<void> {
+  isShowing = isShown
+  await update($, isActive, () => isShown)
+
+  if (isShown) {
+    await applyLook($)
+  } else {
+    look?.cancel()
+    look = undefined
+    stopPlayer()
+  }
+}
+
+// Shows or rests as the shared file says now, taking up the person's latest
+// sound choices first, and tells the player.
+async function followLooks($: EngineInterface, isShown: boolean): Promise<void> {
+  if (isShown === isShowing) {
+    return
+  }
+  await readControl($)
+  await becomeShown($, isShown)
+  await writeControl($)
+
+  if (isShown) {
+    await keepSong($)
+  }
+}
+
+// One look at the shared theme file: back on the list if this mod is missing
+// from it, and shown or resting as it says.
+// A file caught half written, or unreadable, is left for the next look.
+async function syncLooks($: EngineInterface): Promise<void> {
+  let state = await readLooks($)
+
+  if (state.broken !== undefined) {
+    return
+  }
+  let isRejoined = false
+
+  if (!Object.hasOwn(state.looks, ME)) {
+    state = await joinLooks($, ME, LABEL, false)
+
+    if (state.broken !== undefined) {
+      return
+    }
+    isRejoined = true
+  }
+  const isShown = state.look === ME
+
+  if (isShown !== isShowing) {
+    await followLooks($, isShown)
+  } else if (isShown && backdropOwner !== ME && (isRejoined || backdropOwner !== undefined)) {
+    // Shown, but another theme's picture is up: put this one back.
+    await applyLook($)
+  }
+}
+
+function watchSoon($: EngineInterface): void {
+  watch?.cancel()
+  watch = $.clock.after(WATCH_EVERY_MS, () => {
+    watchSoon($)
+    void syncLooks($).catch(() => {})
+  })
+}
+
+// The Theme button: the next installed theme shows, in every chat, and this
+// one rests; when no other is installed, nothing changes.
+export async function switchTheme($: EngineInterface): Promise<void> {
+  const state = await joinLooks($, ME, LABEL, false)
+
+  if (state.broken !== undefined) {
+    $.ui.toast('The theme file could not be read just now. Try again in a moment.')
+
+    return
+  }
+  // From this theme while it shows; from the one showing while it rests.
+  const from = isShowing ? ME : (state.look ?? ME)
+  const to = nextLook(state, from)
+
+  if (to === from) {
+    $.ui.toast('No other theme is installed.')
+
+    return
+  }
+  if ((await chooseLook($, to)).broken === undefined) {
+    await followLooks($, to === ME)
+  }
+}
+
+// Called first from the mod's one `session.start` hook: joins the theme switch
+// and gives the app the look when this theme is the one that shows.
+export async function startLooks($: EngineInterface, args: ThemeSetArgs): Promise<void> {
+  lookArgs = args
+  // The session's start is the install: a theme new to the list shows itself.
+  const state = await joinLooks($, ME, LABEL, true)
+  isShowing = state.look === ME
+  await update($, isActive, () => isShowing)
+
+  if (isShowing) {
+    await applyLook($)
+  }
+}
+
+// The label of the theme that shows now, for the command's answer.
+async function shownLabel($: EngineInterface): Promise<string> {
+  if (isShowing) {
+    return LABEL
+  }
+  const state = await readLooks($)
+
+  return state.look === undefined ? 'another' : (state.looks[state.look] ?? state.look)
 }
 
 // Sets how loud the crunches and the song are, 0 to 100, in every chat. The
 // song follows while it plays: it does not start over.
 export async function setVolume($: EngineInterface, percent: number): Promise<void> {
   const next = Math.max(0, Math.min(100, Math.round(percent / 10) * 10))
+
+  // The person's latest choices first, made in any chat.
+  await readControl($)
 
   if (next > 0) {
     unmuteTo = next
@@ -232,6 +411,7 @@ export async function switchKeys($: EngineInterface, to?: string): Promise<void>
 
 // Silence, or back to the loudness before it.
 export async function toggleMute($: EngineInterface): Promise<void> {
+  await readControl($)
   await setVolume($, level === 0 ? unmuteTo : 0)
 }
 
@@ -251,8 +431,9 @@ export async function startSound($: EngineInterface): Promise<void> {
   const isText = (await $.store.get('text')) === true
   await update($, isTextShown, () => isText)
 
-  // The first chat ever writes the control file; every other one reads it.
-  if (controlPath !== '' && !(await readControl($))) {
+  // The first chat ever writes the control file; every other one reads it,
+  // and writes it again only to tell the player whether this theme shows.
+  if (controlPath !== '' && (!(await readControl($)) || controlLook !== isShowing)) {
     await writeControl($)
   }
   await update($, volume, () => Math.round(level * 100))
@@ -260,11 +441,20 @@ export async function startSound($: EngineInterface): Promise<void> {
   await update($, isVolumeShown, () => isBar)
   await $.command.register({
     name: 'winter',
-    description: 'Winter evening: /winter keys, /winter volume 40, /winter music, /winter crunch, /winter text, /winter quiet, /winter on',
+    description:
+      'Winter evening: /winter keys, /winter volume 40, /winter music, /winter crunch, /winter text, /winter quiet, /winter on (sound on and Winter the theme that shows; also brings a theme back if none shows), /winter theme',
   })
 
-  // A little apart from the other chats starting in the same moment.
-  lookSoon($, 300 + Math.random() * 2_500)
+  // One look at the theme file before any song: a Winter that rests never
+  // starts it, even for a moment.
+  await syncLooks($).catch(() => {})
+
+  // A little apart from the other chats starting in the same moment. While
+  // another theme shows there is no song.
+  if (isShowing) {
+    lookSoon($, 300 + Math.random() * 2_500)
+  }
+  watchSoon($)
 }
 
 export function registerSound(on: On): void {
@@ -273,6 +463,8 @@ export function registerSound(on: On): void {
     if (e.reason !== 'clear') {
       look?.cancel()
       look = undefined
+      watch?.cancel()
+      watch = undefined
       stopPlayer()
     }
 
@@ -283,6 +475,8 @@ export function registerSound(on: On): void {
     // `/winter music` flips it; `/winter music on` or `off` says which.
     const [word = '', want = ''] = e.args.trim().toLowerCase().split(/\s+/)
     const flip = (now: boolean): boolean => (want === 'on' ? true : want === 'off' ? false : !now)
+    // The person's latest choices, made in any chat, before anything is written.
+    await readControl($)
 
     if (word === 'keys') {
       // `/winter keys snow` or `/winter keys drops`; alone, it switches.
@@ -308,6 +502,12 @@ export function registerSound(on: On): void {
     } else if (word === 'on') {
       isMusicOn = true
       isCrunchOn = true
+      // And this theme shows, in every chat.
+      await joinLooks($, ME, LABEL, false)
+      await chooseLook($, ME)
+      await becomeShown($, true)
+    } else if (word === 'theme') {
+      await switchTheme($)
     }
     await $.store.set('crunch', isCrunchOn)
     // The player reads the same file: it ends itself when the music goes off,
@@ -316,9 +516,10 @@ export function registerSound(on: On): void {
     await keepSong($)
 
     const isText = await read($, isTextShown)
+    const shown = await shownLabel($)
 
     return {
-      text: `Winter evening: typing sound ${keys === 'snow' ? 'snow crunch' : 'soft taps'}, volume ${Math.round(level * 100)}%, music ${isMusicOn ? 'on' : 'off'}, snow crunch ${isCrunchOn ? 'on' : 'off'}, reply copied into the scene ${isText ? 'on' : 'off'}. Change with /winter keys, /winter volume 40, /winter music, /winter crunch, /winter text, /winter quiet or /winter on.`,
+      text: `Winter evening: theme showing ${shown}${isShowing ? '' : ' (Winter is resting: no look, row or sound)'}, typing sound ${keys === 'snow' ? 'snow crunch' : 'soft taps'}, volume ${Math.round(level * 100)}%, music ${isMusicOn ? 'on' : 'off'}, snow crunch ${isCrunchOn ? 'on' : 'off'}, reply copied into the scene ${isText ? 'on' : 'off'}. Change with /winter keys, /winter volume 40, /winter music, /winter crunch, /winter text, /winter quiet or /winter on (which also makes Winter the theme that shows, and brings a theme back if none shows); /winter theme switches to the next theme.`,
     }
   })
 
@@ -339,10 +540,20 @@ export function registerSound(on: On): void {
     return next(e)
   })
 
-  // A press on any button a mod drew.
-  on('ui.press', { plugin: '*' }, ($, e, next) => {
+  // A press on any button a mod drew. A Theme button (any look mod's) hands
+  // over at once: its own handler, beneath, has written the shared file.
+  on('ui.press', { plugin: '*' }, async ($, e, next) => {
     crunch($, 'step')
+    const answer = await next(e)
 
-    return next(e)
+    if (e.element === 'look') {
+      await syncLooks($).catch(() => {})
+      // Once more shortly, in case the button's handler wrote the file late.
+      $.clock.after(PRESS_RECHECK_MS, () => {
+        void syncLooks($).catch(() => {})
+      })
+    }
+
+    return answer
   })
 }

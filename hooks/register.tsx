@@ -3,7 +3,17 @@ import type { Register, ThemeSetArgs } from 'claude-code'
 
 import { makeColors } from './make-colors.js'
 import { sceneWith } from './scene.js'
-import { registerSound, setVolume, showVolume, startSound, switchKeys, toggleMute } from './sound.js'
+import {
+  registerSound,
+  setVolume,
+  noteBackdrop,
+  showVolume,
+  startLooks,
+  startSound,
+  switchKeys,
+  switchTheme,
+  toggleMute,
+} from './sound.js'
 
 // Steel-blue dusk: dark only, to sit under the snowy evening scene.
 const { theme, problems } = makeColors({
@@ -50,6 +60,9 @@ const isVolumeShown = atom({ plugin: 'winter-evening', key: 'isVolumeShown' } as
 // Which typing sound plays, 'drops' or 'snow' (sound.ts keeps it).
 const keySound = atom({ plugin: 'winter-evening', key: 'keySound' } as const, 'drops')
 
+// Whether this is the theme that shows (sound.ts keeps it, from ~/.claude/looks.json).
+const isActive = atom({ plugin: 'winter-evening', key: 'isActive' } as const, true)
+
 const ALT =
   'Snow falling over a foggy blue courtyard between apartment blocks at dusk, people walking along a snowy path'
 
@@ -66,13 +79,9 @@ export const register: Register = on => {
       const now = await $.clock.now()
       await update($, sceneEpoch, () => now)
     }
-    // An older build of the app takes the scene but not the colors: give it
-    // the scene alone, so it still has the look's picture and its sound.
-    try {
-      await $.theme.set(LOOK)
-    } catch {
-      await $.theme.set({ backdrop: LOOK.backdrop }).catch(() => {})
-    }
+    // The look, when this is the theme that shows (sound.ts; an older build
+    // of the app gets the scene alone, so it still has the look's picture).
+    await startLooks($, LOOK)
     // While you build: the line that would stop Desktop painting this look.
     const unpainted = problems.find(line => line.startsWith("Desktop won't paint"))
 
@@ -99,9 +108,10 @@ export const register: Register = on => {
     return answer
   })
 
-  // The volume row above the message box: quieter, a bar, louder, mute, hide.
+  // The volume row above the message box: quieter, a bar, louder, mute,
+  // theme, hide. None while another theme shows.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || !(await read($, isVolumeShown))) {
+    if (e.props.hasSurvey || !(await read($, isVolumeShown)) || !(await read($, isActive))) {
       return next(e)
     }
 
@@ -121,6 +131,7 @@ export const register: Register = on => {
         <Button key="louder" label="+" onPress={() => setVolume($, now + 10)} />
         <Button key="mute" label={now === 0 ? 'Unmute' : 'Mute'} onPress={() => toggleMute($)} />
         <Button key="keys" label={isSnow ? 'Keys: snow crunch' : 'Keys: soft taps'} onPress={() => switchKeys($)} />
+        <Button key="look" label="Theme: Winter" onPress={() => switchTheme($)} />
         <Button
           key="hide"
           label="Hide"
@@ -134,6 +145,10 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Backdrop' }, async ($, e, next) => {
+    // Every mod hears every backdrop drawing: note whose it is, for the theme
+    // switch (sound.ts), before drawing or passing it on.
+    noteBackdrop(e.props.plugin)
+
     if ((e.surface !== 'desktop' && e.surface !== 'mobile') || e.props.scene !== 'winter-evening') {
       return next(e)
     }

@@ -13,6 +13,8 @@ declare module 'claude-code' {
       isVolumeShown: boolean
       /** Whether the reply is drawn in the scene. */
       isTextShown: boolean
+      /** Whether this is the theme that shows (~/.claude/looks.json); true until told otherwise. */
+      isActive: boolean
     }
   }
 }

@@ -42,6 +42,7 @@ The song turns up or down while it plays; it does not start over.
 - `/winter crunch` turns the snow crunches on or off.
 - `/winter text` draws the first lines of the latest reply into the scene, hung over the lane.
 - `/winter quiet` silences everything, `/winter on` brings the sound back.
+- `/winter theme` switches to the next installed theme (see Switching themes).
 
 Add `on` or `off` to say which, as in `/winter music off`.
 
@@ -52,6 +53,21 @@ the one song. They are kept in `~/.claude/winter-evening-sound.json`.
 
 The crunch plays when you type in the message box, when you send, and when you press a button a
 mod drew. Mods cannot hear other mouse clicks.
+
+## Switching themes
+
+Winter evening can be installed beside another look mod, such as Miami sunset. One theme shows
+at a time, in every chat; the others rest, with no look, no row and no sound.
+
+- `Theme: Winter` on the volume row hands the screen to the next installed theme.
+- `/winter theme` does the same; `/miami theme` does it from Miami sunset.
+- `/winter on` brings Winter back (and its sound) and makes it the theme that shows; `/miami on`
+  does the same for Miami.
+
+A newly installed theme shows itself first. The themes share `~/.claude/looks.json`; while Winter
+rests, the song stops in every chat and your volume and music choices are kept.
+
+If no theme shows after removing one, type `/winter on` or `/miami on`.
 
 ## Credits
 
