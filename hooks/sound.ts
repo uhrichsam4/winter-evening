@@ -373,6 +373,16 @@ export async function startLooks($: EngineInterface, args: ThemeSetArgs): Promis
   }
 }
 
+// A new look (the Colour button): given to the app now while this theme shows;
+// while it rests, kept for when it shows again.
+export async function setLook($: EngineInterface, args: ThemeSetArgs): Promise<void> {
+  lookArgs = args
+
+  if (isShowing) {
+    await applyLook($)
+  }
+}
+
 // The label of the theme that shows now, for the command's answer.
 async function shownLabel($: EngineInterface): Promise<string> {
   if (isShowing) {
@@ -442,7 +452,7 @@ export async function startSound($: EngineInterface): Promise<void> {
   await $.command.register({
     name: 'winter',
     description:
-      'Winter evening: /winter keys, /winter volume 40, /winter music, /winter crunch, /winter text, /winter quiet, /winter on (sound on and Winter the theme that shows; also brings a theme back if none shows), /winter theme',
+      'Winter evening: /winter keys, /winter volume 40, /winter music, /winter crunch, /winter text, /winter colour (Black or Blue; also /winter black, /winter blue), /winter quiet, /winter on (sound on and Winter the theme that shows; also brings a theme back if none shows), /winter theme',
   })
 
   // One look at the theme file before any song: a Winter that rests never

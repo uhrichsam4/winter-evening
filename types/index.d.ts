@@ -15,6 +15,8 @@ declare module 'claude-code' {
       isTextShown: boolean
       /** Whether this is the theme that shows (~/.claude/looks.json); true until told otherwise. */
       isActive: boolean
+      /** Which colourway shows: 'black' (Space Black) or 'blue' (steel-blue dusk). */
+      tone: string
     }
   }
 }

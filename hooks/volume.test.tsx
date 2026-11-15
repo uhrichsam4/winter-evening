@@ -146,10 +146,10 @@ test('a change of volume is written for every chat and the player, and starts no
 
 // The engine beneath the plugin for a chat with the shared theme file: the
 // files by path, `pgrep`, the player, and every call the switch makes.
-function chat(on: On, files: Record<string, string>) {
-  const seen = { themeSets: 0, themeClears: 0, toasts: [] as string[], sounds: 0, spawned: 0, looksReads: 0, looksWrites: 0 }
+function chat(on: On, files: Record<string, string>, store: Record<string, unknown> = {}) {
+  const seen = { themeSets: 0, themeClears: 0, toasts: [] as string[], sounds: 0, spawned: 0, looksReads: 0, looksWrites: 0, themes: [] as unknown[] }
   let running = 0
-  mock.store(on)
+  mock.store(on, store)
   mock.env(on, { HOME })
   on('fs.read', (_, e) => {
     if (e.path === LOOKS) {
@@ -197,8 +197,9 @@ function chat(on: On, files: Record<string, string>) {
     return { value: undefined }
   })
   on('command.register', () => ({ value: { command: 'winter' } }))
-  on('theme.set', () => {
+  on('theme.set', (_, e) => {
     seen.themeSets += 1
+    seen.themes.push(e)
 
     return { value: { isDrawn: true, requestId: 'backdrop' } }
   })
@@ -486,4 +487,117 @@ test('a resting Winter is silent, starts no song, and takes up choices made else
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /%/ }))?.text).toBe('███████░░░ 70%')
   await ui.unmount()
+})
+
+// ---- the colourways ----------------------------------------------------------
+
+const BACKDROP = {
+  plugin: 'winter-evening',
+  component: 'Backdrop',
+  requestId: 'backdrop',
+  props: { scene: 'winter-evening', plugin: 'winter-evening', glass: false },
+  surface: 'desktop',
+} as const
+// The fog's colour in each colourway: each appears in its own scene only.
+const BLACK_FOG = '#282727'
+const BLUE_FOG = '#6c8cbb'
+type Look = { colors?: unknown; backdrop?: { glass?: { tint?: string } } }
+const tintOf = (look: unknown): string | undefined => (look as Look | undefined)?.backdrop?.glass?.tint
+const colorsOf = (look: unknown): string => JSON.stringify((look as Look | undefined)?.colors)
+
+test('the Colour button flips Black and Blue: its label, the scene and the look', async ($, on) => {
+  mock.clock(on)
+  const files: Record<string, string> = { [LOOKS]: looksFile('winter-evening') }
+  const seen = chat(on, files)
+
+  await $.session.start(START)
+  expect(seen.themeSets).toBe(1)
+  expect(tintOf(seen.themes[0])).toBe('#0e0e10')
+
+  const row = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await row.find({ type: 'Button', key: 'tone' }))?.props.label).toBe('Colour: Black')
+  let scene = await $.ui.mount(BACKDROP)
+  let source = String((await scene.find({ type: 'Svg' }))?.props.source)
+  expect(source).toContain(BLACK_FOG)
+  expect(source).not.toContain(BLUE_FOG)
+  await scene.unmount()
+
+  await row.press({ key: 'tone' })
+  expect((await row.find({ type: 'Button', key: 'tone' }))?.props.label).toBe('Colour: Blue')
+  expect(seen.themeSets).toBe(2)
+  expect(tintOf(seen.themes[1])).toBe('#0a1524')
+  expect(colorsOf(seen.themes[1])).not.toBe(colorsOf(seen.themes[0]))
+  scene = await $.ui.mount(BACKDROP)
+  source = String((await scene.find({ type: 'Svg' }))?.props.source)
+  expect(source).toContain(BLUE_FOG)
+  expect(source).not.toContain(BLACK_FOG)
+  await scene.unmount()
+
+  await row.press({ key: 'tone' })
+  expect((await row.find({ type: 'Button', key: 'tone' }))?.props.label).toBe('Colour: Black')
+  expect(tintOf(seen.themes[2])).toBe('#0e0e10')
+  expect(colorsOf(seen.themes[2])).toBe(colorsOf(seen.themes[0]))
+  await row.unmount()
+})
+
+test('the colour chosen survives a restart', async ($, on) => {
+  mock.clock(on)
+  const files: Record<string, string> = { [LOOKS]: looksFile('winter-evening') }
+  const seen = chat(on, files, { tone: 'blue' })
+
+  await $.session.start(START)
+  expect(tintOf(seen.themes[0])).toBe('#0a1524')
+  const row = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await row.find({ type: 'Button', key: 'tone' }))?.props.label).toBe('Colour: Blue')
+  await row.unmount()
+})
+
+test('a resting Winter keeps a colour change but sets no theme', async ($, on) => {
+  mock.clock(on)
+  const files: Record<string, string> = { [LOOKS]: looksFile('miami-sunset') }
+  const seen = chat(on, files)
+
+  await $.session.start(START)
+  const answer = await $.command.run({ command: 'winter', args: 'blue', ...AT_THE_PROMPT })
+  expect(seen.themeSets).toBe(0)
+  expect(JSON.stringify(answer)).toContain('colour Blue')
+  expect(JSON.stringify(answer)).toContain('resting')
+
+  // Back as the theme that shows: in the colour chosen while it rested.
+  await $.command.run({ command: 'winter', args: 'on', ...AT_THE_PROMPT })
+  expect(seen.themeSets).toBe(1)
+  expect(tintOf(seen.themes[0])).toBe('#0a1524')
+})
+
+test('/winter blue, /winter black and /winter colour pick and flip the colour', async ($, on) => {
+  mock.clock(on)
+  const files: Record<string, string> = { [LOOKS]: looksFile('winter-evening') }
+  const seen = chat(on, files)
+
+  await $.session.start(START)
+  await $.command.run({ command: 'winter', args: 'blue', ...AT_THE_PROMPT })
+  expect(tintOf(seen.themes[seen.themes.length - 1])).toBe('#0a1524')
+  await $.command.run({ command: 'winter', args: 'blue', ...AT_THE_PROMPT })
+  expect(tintOf(seen.themes[seen.themes.length - 1])).toBe('#0a1524')
+  await $.command.run({ command: 'winter', args: 'colour', ...AT_THE_PROMPT })
+  expect(tintOf(seen.themes[seen.themes.length - 1])).toBe('#0e0e10')
+  const flipped = await $.command.run({ command: 'winter', args: 'color', ...AT_THE_PROMPT })
+  expect(tintOf(seen.themes[seen.themes.length - 1])).toBe('#0a1524')
+  expect(JSON.stringify(flipped)).toContain('colour Blue')
+  await $.command.run({ command: 'winter', args: 'black', ...AT_THE_PROMPT })
+  expect(tintOf(seen.themes[seen.themes.length - 1])).toBe('#0e0e10')
+
+  // The other words still reach the sound's command.
+  const status = await $.command.run({ command: 'winter', args: 'music off', ...AT_THE_PROMPT })
+  expect(JSON.stringify(status)).toContain('music off')
+})
+
+test('the plain /winter answer names the colour', async ($, on) => {
+  mock.clock(on)
+  const files: Record<string, string> = { [LOOKS]: looksFile('winter-evening') }
+  chat(on, files, { tone: 'blue' })
+
+  await $.session.start(START)
+  const status = await $.command.run({ command: 'winter', args: '', ...AT_THE_PROMPT })
+  expect(JSON.stringify(status)).toContain('Colour: Blue')
 })
